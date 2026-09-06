@@ -44,6 +44,11 @@ async function run() {
         fs.mkdirSync(directory, { recursive: true });
     }
     fs.copyFileSync(path.join(repo, "download.php"), path.join(site, "download.php"));
+    const distributionsRegistry = path.join(data, "distributions-registry.json");
+    const mediaRegistry = path.join(data, "media-registry.json");
+    fs.copyFileSync(path.join(repo, "config", "distributions-registry.json"), distributionsRegistry);
+    fs.copyFileSync(path.join(repo, "config", "media-registry.seed.json"), mediaRegistry);
+    const originalMediaRegistry = fs.readFileSync(mediaRegistry, "utf8");
     fs.writeFileSync(path.join(media, "manifest.mp3"), "test-audio");
     fs.writeFileSync(path.join(distr, "plg_content_bslmediaembed-0.1.1.zip"), "test-zip");
 
@@ -92,6 +97,42 @@ async function run() {
     assert.equal(response.headers.get("content-disposition"), 'attachment; filename="plg_content_bslmediaembed-0.1.1.zip"');
     assert.equal(Buffer.from(await response.arrayBuffer()).toString(), "test-zip");
     assert.match(logLines().at(-1), /\tbsl-media-embed-0\.1\.1\tjoomla$/);
+
+    const logCountBeforeConfigurationErrors = logLines().length;
+
+    fs.writeFileSync(mediaRegistry, "{", "utf8");
+    response = await fetch(`${url}?file=manifest-audio`);
+    assert.equal(response.status, 500);
+    assert.equal(await response.text(), "Error: service configuration unavailable");
+    fs.writeFileSync(mediaRegistry, originalMediaRegistry, "utf8");
+
+    const missingMediaRegistry = `${mediaRegistry}.missing`;
+    fs.renameSync(mediaRegistry, missingMediaRegistry);
+    try {
+        response = await fetch(`${url}?file=manifest-audio`);
+        assert.equal(response.status, 500);
+        assert.equal(await response.text(), "Error: service configuration unavailable");
+    } finally {
+        fs.renameSync(missingMediaRegistry, mediaRegistry);
+    }
+
+    const invalidMediaRegistry = JSON.parse(originalMediaRegistry);
+    invalidMediaRegistry["manifest-audio"] = "../media/manifest.mp3";
+    fs.writeFileSync(mediaRegistry, JSON.stringify(invalidMediaRegistry), "utf8");
+    response = await fetch(`${url}?file=manifest-audio`);
+    assert.equal(response.status, 500);
+    assert.equal(await response.text(), "Error: service configuration unavailable");
+    fs.writeFileSync(mediaRegistry, originalMediaRegistry, "utf8");
+
+    const duplicateMediaRegistry = JSON.parse(originalMediaRegistry);
+    duplicateMediaRegistry["bsl-media-embed-0.1.1"] = "manifest.mp3";
+    fs.writeFileSync(mediaRegistry, JSON.stringify(duplicateMediaRegistry), "utf8");
+    response = await fetch(`${url}?file=manifest-audio`);
+    assert.equal(response.status, 500);
+    assert.equal(await response.text(), "Error: service configuration unavailable");
+    fs.writeFileSync(mediaRegistry, originalMediaRegistry, "utf8");
+
+    assert.equal(logLines().length, logCountBeforeConfigurationErrors);
 
     console.log("OK: download gateway integration tests passed");
 }
