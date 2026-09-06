@@ -19,29 +19,91 @@ function sendError(int $statusCode, string $message): never
     exit;
 }
 
-$allowed = [
-    // Distribution packages
-    'tor' => '../distr/torbrowser-install.exe',
-    'bsl-tor' => '../distr/bsl-tor_0.4.7_x64-setup.zip',
-    'tor-bundle' => '../distr/tor-expert-bundle-windows-x86_64-15.0.11.tar.gz',
-    '7zip' => '../distr/7z2601-x64.exe',
-    'bsl-tagcloud-1.0.0' => '../distr/mod_bsl_tagcloud-1.0.0.zip',
-    'bsl-tagcloud-1.0.1' => '../distr/mod_bsl_tagcloud-1.0.1.zip',
-    'bsl-tagcloud-1.1.0' => '../distr/mod_bsl_tagcloud-1.1.0.zip',
-    'bsl-tagcloud-1.2.0' => '../distr/mod_bsl_tagcloud-1.2.0.zip',
-    'bsl-media-embed-0.1.1' => '../distr/plg_content_bslmediaembed-0.1.1.zip',
-    'bsl-timer-0.3.0' => '../distr/bsl-timer_0.3.0_free_x64-setup.zip',
-    'bsl-timer-0.4.0' => '../distr/BSL-Timer-0.4.0-Free-x64-setup.exe.zip',
+function loadRegistry(string $registryFile, string $baseDirectory): array
+{
+    if (!is_file($registryFile) || !is_readable($registryFile)) {
+        throw new RuntimeException('Registry file is unavailable');
+    }
 
-    // Audio files
-    'manifest-audio' => '../media/manifest.mp3',
-    'karamazov-audio' => '../media/karamazovs-malovernaya-dama-nl.mp3',
-    'forest-audio' => '../media/forest.mp3',
-    'peskarev-audio' => '../media/peskarev-x15.mp3',
+    $json = file_get_contents($registryFile);
 
-    // Video files
-    'bsl-timer-tray' => '../media/bsl-timer-tray.mp4',
-];
+    if ($json === false || strlen($json) > 1048576) {
+        throw new RuntimeException('Registry file cannot be read');
+    }
+
+    try {
+        $decoded = json_decode($json, false, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        throw new RuntimeException('Registry file contains invalid JSON', 0, $exception);
+    }
+
+    if (!$decoded instanceof stdClass) {
+        throw new RuntimeException('Registry root must be a JSON object');
+    }
+
+    $resolvedBase = realpath($baseDirectory);
+
+    if ($resolvedBase === false || !is_dir($resolvedBase)) {
+        throw new RuntimeException('Registry base directory is unavailable');
+    }
+
+    $registry = [];
+
+    foreach (get_object_vars($decoded) as $key => $filename) {
+        if (!preg_match('~^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$~', $key)) {
+            throw new RuntimeException('Registry contains an invalid key');
+        }
+
+        if (
+            !is_string($filename)
+            || !preg_match('~^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$~', $filename)
+        ) {
+            throw new RuntimeException('Registry contains an invalid filename');
+        }
+
+        $registry[$key] = [
+            'base' => $resolvedBase,
+            'filename' => $filename,
+        ];
+    }
+
+    return $registry;
+}
+
+function isPathWithinDirectory(string $path, string $directory): bool
+{
+    $path = rtrim(str_replace('\\', '/', $path), '/');
+    $directory = rtrim(str_replace('\\', '/', $directory), '/');
+
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $path = strtolower($path);
+        $directory = strtolower($directory);
+    }
+
+    return str_starts_with($path, $directory . '/');
+}
+
+$storageRoot = dirname(__DIR__);
+$dataDirectory = $storageRoot . DIRECTORY_SEPARATOR . 'bsl-data';
+
+try {
+    $distributionFiles = loadRegistry(
+        $dataDirectory . DIRECTORY_SEPARATOR . 'distributions-registry.json',
+        $storageRoot . DIRECTORY_SEPARATOR . 'distr'
+    );
+    $mediaFiles = loadRegistry(
+        $dataDirectory . DIRECTORY_SEPARATOR . 'media-registry.json',
+        $storageRoot . DIRECTORY_SEPARATOR . 'media'
+    );
+
+    if (array_intersect_key($distributionFiles, $mediaFiles) !== []) {
+        throw new RuntimeException('Registry keys must be unique');
+    }
+
+    $allowed = $distributionFiles + $mediaFiles;
+} catch (Throwable $exception) {
+    sendError(500, 'Error: service configuration unavailable');
+}
 
 $requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
@@ -58,9 +120,17 @@ if (!array_key_exists($key, $allowed)) {
     sendError(400, 'Error: invalid key');
 }
 
-$file = realpath(__DIR__ . DIRECTORY_SEPARATOR . $allowed[$key]);
+$entry = $allowed[$key];
+$file = realpath(
+    $entry['base'] . DIRECTORY_SEPARATOR . $entry['filename']
+);
 
-if ($file === false || !is_file($file) || !is_readable($file)) {
+if (
+    $file === false
+    || !isPathWithinDirectory($file, $entry['base'])
+    || !is_file($file)
+    || !is_readable($file)
+) {
     sendError(404, 'Error: file not found');
 }
 

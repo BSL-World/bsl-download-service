@@ -1,0 +1,13 @@
+{
+    "tor": "torbrowser-install.exe",
+    "bsl-tor": "bsl-tor_0.4.7_x64-setup.zip",
+    "tor-bundle": "tor-expert-bundle-windows-x86_64-15.0.11.tar.gz",
+    "7zip": "7z2601-x64.exe",
+    "bsl-tagcloud-1.0.0": "mod_bsl_tagcloud-1.0.0.zip",
+    "bsl-tagcloud-1.0.1": "mod_bsl_tagcloud-1.0.1.zip",
+    "bsl-tagcloud-1.1.0": "mod_bsl_tagcloud-1.1.0.zip",
+    "bsl-tagcloud-1.2.0": "mod_bsl_tagcloud-1.2.0.zip",
+    "bsl-media-embed-0.1.1": "plg_content_bslmediaembed-0.1.1.zip",
+    "bsl-timer-0.3.0": "bsl-timer_0.3.0_free_x64-setup.zip",
+    "bsl-timer-0.4.0": "BSL-Timer-0.4.0-Free-x64-setup.exe.zip"
+}
