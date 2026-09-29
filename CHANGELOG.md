@@ -2,7 +2,7 @@
 
 All notable changes to BSL Download Service are documented in this file.
 
-## Unreleased
+## [0.3.0] - 2026-09-29
 
 ### Added
 
