@@ -12,10 +12,7 @@ if (!php) throw new Error("Pass the path to php.exe as the first argument");
 const repo = path.resolve(__dirname, "..");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "bsl-download-service-"));
 const site = path.join(root, "site");
-const distr = path.join(root, "distr");
-const media = path.join(root, "media");
-const data = path.join(root, "bsl-data");
-const log = path.join(data, "download.log");
+const log = path.join(root, "bsl-data", "download.log");
 const port = 18000 + process.pid % 10000;
 const url = `http://127.0.0.1:${port}/download.php`;
 let server;
@@ -40,17 +37,26 @@ async function waitForServer() {
 }
 
 async function run() {
-    for (const directory of [site, distr, media, data]) {
-        fs.mkdirSync(directory, { recursive: true });
-    }
+    fs.mkdirSync(site, { recursive: true });
+    fs.mkdirSync(path.dirname(log), { recursive: true });
     fs.copyFileSync(path.join(repo, "download.php"), path.join(site, "download.php"));
-    const distributionsRegistry = path.join(data, "distributions-registry.json");
-    const mediaRegistry = path.join(data, "media-registry.json");
-    fs.copyFileSync(path.join(repo, "config", "distributions-registry.json"), distributionsRegistry);
-    fs.copyFileSync(path.join(repo, "config", "media-registry.seed.json"), mediaRegistry);
-    const originalMediaRegistry = fs.readFileSync(mediaRegistry, "utf8");
-    fs.writeFileSync(path.join(media, "manifest.mp3"), "test-audio");
-    fs.writeFileSync(path.join(distr, "plg_content_bslmediaembed-0.1.1.zip"), "test-zip");
+
+    const fixtures = new Map([
+        ["media/manifest.mp3", "test-audio"],
+        ["distr/7z2601-x64.exe", "test-7zip"],
+        ["distr/bsl-tor_0.4.7_x64-setup.zip", "test-bsl-tor"],
+        ["distr/tor-browser-windows-x86_64-portable-15.0.11.exe", "test-tor-portable"],
+        ["distr/tor-expert-bundle-windows-x86_64-15.0.11.tar.gz", "test-tor-bundle"],
+        ["distr/bsl-media-embed/plg_content_bslmediaembed-0.1.1.zip", "test-media-011"],
+        ["distr/bsl-media-embed/plg_content_bslmediaembed-0.2.0.zip", "test-media-020"],
+        ["distr/bsl-timer/bsl-timer_0.7.2_x64-setup.exe", "test-timer"],
+    ]);
+
+    for (const [relativePath, contents] of fixtures) {
+        const fullPath = path.join(root, relativePath);
+        fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+        fs.writeFileSync(fullPath, contents);
+    }
 
     server = spawn(php, ["-n", "-S", `127.0.0.1:${port}`, "-t", site], {
         windowsHide: true,
@@ -64,15 +70,19 @@ async function run() {
     assert.equal(response.status, 405);
     assert.equal(response.headers.get("allow"), "GET, HEAD");
 
-    for (const key of ["unknown", "../media/manifest.mp3"]) {
-        response = await fetch(`${url}?file=${encodeURIComponent(key)}`);
-        assert.equal(response.status, 400);
-        assert.equal(await response.text(), "Error: invalid key");
+    for (const query of [
+        "file=unknown",
+        `file=${encodeURIComponent("../media/manifest.mp3")}`,
+        "product=unknown&file=artifact.zip",
+        `product=bsl-timer&file=${encodeURIComponent("../manifest.mp3")}`,
+        "product=bsl-timer&file=missing.exe",
+        "product=bsl-timer&file=notes.txt",
+    ]) {
+        response = await fetch(`${url}?${query}`);
+        assert.equal(response.status, 404, query);
+        assert.equal(await response.text(), "404 Not Found", query);
     }
-
-    response = await fetch(`${url}?file=bsl-tagcloud-1.2.0`);
-    assert.equal(response.status, 404);
-    assert.equal(await response.text(), "Error: file not found");
+    assert.deepEqual(logLines(), []);
 
     response = await fetch(`${url}?file=manifest-audio`, { method: "HEAD" });
     assert.equal(response.status, 200);
@@ -83,7 +93,7 @@ async function run() {
     response = await fetch(`${url}?file=manifest-audio&source=site`);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "audio/mpeg");
-    assert.equal(Buffer.from(await response.arrayBuffer()).toString(), "test-audio");
+    assert.equal(await response.text(), "test-audio");
     assert.match(logLines().at(-1), /\tmanifest-audio\tsite$/);
 
     response = await fetch(`${url}?file=manifest-audio&source=forged`);
@@ -91,48 +101,25 @@ async function run() {
     await response.arrayBuffer();
     assert.match(logLines().at(-1), /\tmanifest-audio\tdirect$/);
 
-    response = await fetch(`${url}?file=bsl-media-embed-0.1.1&download=1&source=joomla`);
+    response = await fetch(`${url}?product=bsl-timer&file=bsl-timer_0.7.2_x64-setup.exe&source=updater&download=1`);
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("content-type"), "application/zip");
-    assert.equal(response.headers.get("content-disposition"), 'attachment; filename="plg_content_bslmediaembed-0.1.1.zip"');
-    assert.equal(Buffer.from(await response.arrayBuffer()).toString(), "test-zip");
-    assert.match(logLines().at(-1), /\tbsl-media-embed-0\.1\.1\tjoomla$/);
+    assert.equal(response.headers.get("content-disposition"), 'attachment; filename="bsl-timer_0.7.2_x64-setup.exe"');
+    assert.equal(await response.text(), "test-timer");
+    assert.match(logLines().at(-1), /\tbsl-timer\/bsl-timer_0\.7\.2_x64-setup\.exe\tupdater$/);
 
-    const logCountBeforeConfigurationErrors = logLines().length;
-
-    fs.writeFileSync(mediaRegistry, "{", "utf8");
-    response = await fetch(`${url}?file=manifest-audio`);
-    assert.equal(response.status, 500);
-    assert.equal(await response.text(), "Error: service configuration unavailable");
-    fs.writeFileSync(mediaRegistry, originalMediaRegistry, "utf8");
-
-    const missingMediaRegistry = `${mediaRegistry}.missing`;
-    fs.renameSync(mediaRegistry, missingMediaRegistry);
-    try {
-        response = await fetch(`${url}?file=manifest-audio`);
-        assert.equal(response.status, 500);
-        assert.equal(await response.text(), "Error: service configuration unavailable");
-    } finally {
-        fs.renameSync(missingMediaRegistry, mediaRegistry);
+    for (const [key, body] of [
+        ["tor", "test-tor-portable"],
+        ["bsl-tor", "test-bsl-tor"],
+        ["tor-bundle", "test-tor-bundle"],
+        ["7zip", "test-7zip"],
+        ["bsl-media-embed-0.1.1", "test-media-011"],
+        ["bsl-media-embed-0.2.0", "test-media-020"],
+    ]) {
+        response = await fetch(`${url}?file=${key}&source=joomla`);
+        assert.equal(response.status, 200, key);
+        assert.equal(await response.text(), body, key);
+        assert.equal(logLines().at(-1).split("\t")[1], key);
     }
-
-    const invalidMediaRegistry = JSON.parse(originalMediaRegistry);
-    invalidMediaRegistry["manifest-audio"] = "../media/manifest.mp3";
-    fs.writeFileSync(mediaRegistry, JSON.stringify(invalidMediaRegistry), "utf8");
-    response = await fetch(`${url}?file=manifest-audio`);
-    assert.equal(response.status, 500);
-    assert.equal(await response.text(), "Error: service configuration unavailable");
-    fs.writeFileSync(mediaRegistry, originalMediaRegistry, "utf8");
-
-    const duplicateMediaRegistry = JSON.parse(originalMediaRegistry);
-    duplicateMediaRegistry["bsl-media-embed-0.1.1"] = "manifest.mp3";
-    fs.writeFileSync(mediaRegistry, JSON.stringify(duplicateMediaRegistry), "utf8");
-    response = await fetch(`${url}?file=manifest-audio`);
-    assert.equal(response.status, 500);
-    assert.equal(await response.text(), "Error: service configuration unavailable");
-    fs.writeFileSync(mediaRegistry, originalMediaRegistry, "utf8");
-
-    assert.equal(logLines().length, logCountBeforeConfigurationErrors);
 
     console.log("OK: download gateway integration tests passed");
 }

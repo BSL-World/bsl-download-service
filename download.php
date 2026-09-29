@@ -9,7 +9,7 @@
 
 declare(strict_types=1);
 
-function sendError(int $statusCode, string $message): never
+function sendError(int $statusCode, string $message = '404 Not Found'): never
 {
     http_response_code($statusCode);
     header('Content-Type: text/plain; charset=UTF-8');
@@ -19,135 +19,176 @@ function sendError(int $statusCode, string $message): never
     exit;
 }
 
-function loadRegistry(string $registryFile, string $baseDirectory): array
-{
-    if (!is_file($registryFile) || !is_readable($registryFile)) {
-        throw new RuntimeException('Registry file is unavailable');
-    }
+/*
+ * Product directories for the current distribution infrastructure.
+ *
+ * Adding a new version of an existing product does not require changing
+ * this file. A new product must be explicitly registered here.
+ */
+$products = [
+    'bsl-timer' => '../distr/bsl-timer',
+    'bsl-tag-cloud-aquarium' => '../distr/bsl-tag-cloud-aquarium',
+    'bsl-daily-reflections' => '../distr/bsl-daily-reflections',
+    'bsl-media-embed' => '../distr/bsl-media-embed',
+];
 
-    $json = file_get_contents($registryFile);
+/*
+ * Legacy public keys.
+ *
+ * These entries preserve already published URLs. Do not add new product
+ * versions here. New releases use the product + file route.
+ */
+$legacyFiles = [
+    // Distributives
+    'tor' => '../distr/tor-browser-windows-x86_64-portable-15.0.11.exe',
+    'bsl-tor' => '../distr/bsl-tor_0.4.7_x64-setup.zip',
+    'tor-bundle' => '../distr/tor-expert-bundle-windows-x86_64-15.0.11.tar.gz',
+    '7zip' => '../distr/7z2601-x64.exe',
+    'bsl-tagcloud-1.0.0' => '../distr/bsl-tag-cloud-aquarium/mod_bsl_tagcloud-1.0.0.zip',
+    'bsl-tagcloud-1.0.1' => '../distr/bsl-tag-cloud-aquarium/mod_bsl_tagcloud-1.0.1.zip',
+    'bsl-tagcloud-1.1.0' => '../distr/bsl-tag-cloud-aquarium/mod_bsl_tagcloud-1.1.0.zip',
+    'bsl-tagcloud-1.2.0' => '../distr/bsl-tag-cloud-aquarium/mod_bsl_tagcloud-1.2.0.zip',
+    'bsl-media-embed-0.1.1' => '../distr/bsl-media-embed/plg_content_bslmediaembed-0.1.1.zip',
+    'bsl-media-embed-0.2.0' => '../distr/bsl-media-embed/plg_content_bslmediaembed-0.2.0.zip',
+    'bsl-timer-0.3.0' => '../distr/bsl-timer/bsl-timer_0.3.0_free_x64-setup.zip',
+    'bsl-timer-0.4.0' => '../distr/bsl-timer/BSL-Timer-0.4.0-Free-x64-setup.exe.zip',
 
-    if ($json === false || strlen($json) > 1048576) {
-        throw new RuntimeException('Registry file cannot be read');
-    }
+    // Audio files
+    'manifest-audio' => '../media/manifest.mp3',
+    'karamazov-audio' => '../media/karamazovs-malovernaya-dama-nl.mp3',
+    'forest-audio' => '../media/forest.mp3',
+    'peskarev-audio' => '../media/peskarev-x15.mp3',
 
-    try {
-        $decoded = json_decode($json, false, 512, JSON_THROW_ON_ERROR);
-    } catch (JsonException $exception) {
-        throw new RuntimeException('Registry file contains invalid JSON', 0, $exception);
-    }
+    // Video files
+    'bsl-timer-tray' => '../media/bsl-timer-tray.mp4',
+];
 
-    if (!$decoded instanceof stdClass) {
-        throw new RuntimeException('Registry root must be a JSON object');
-    }
+$allowedExtensions = [
+    'exe',
+    'zip',
+    'gz',
+];
 
-    $resolvedBase = realpath($baseDirectory);
+$mimeTypes = [
+    'mp3' => 'audio/mpeg',
+    'mp4' => 'video/mp4',
+    'webm' => 'video/webm',
+    'ogg' => 'application/ogg',
+    'exe' => 'application/octet-stream',
+    'zip' => 'application/zip',
+    'gz' => 'application/gzip',
+];
 
-    if ($resolvedBase === false || !is_dir($resolvedBase)) {
-        throw new RuntimeException('Registry base directory is unavailable');
-    }
-
-    $registry = [];
-
-    foreach (get_object_vars($decoded) as $key => $filename) {
-        if (!preg_match('~^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$~', $key)) {
-            throw new RuntimeException('Registry contains an invalid key');
-        }
-
-        if (
-            !is_string($filename)
-            || !preg_match('~^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$~', $filename)
-        ) {
-            throw new RuntimeException('Registry contains an invalid filename');
-        }
-
-        $registry[$key] = [
-            'base' => $resolvedBase,
-            'filename' => $filename,
-        ];
-    }
-
-    return $registry;
-}
-
-function isPathWithinDirectory(string $path, string $directory): bool
-{
-    $path = rtrim(str_replace('\\', '/', $path), '/');
-    $directory = rtrim(str_replace('\\', '/', $directory), '/');
-
-    if (DIRECTORY_SEPARATOR === '\\') {
-        $path = strtolower($path);
-        $directory = strtolower($directory);
-    }
-
-    return str_starts_with($path, $directory . '/');
-}
-
-$storageRoot = dirname(__DIR__);
-$dataDirectory = $storageRoot . DIRECTORY_SEPARATOR . 'bsl-data';
-
-try {
-    $distributionFiles = loadRegistry(
-        $dataDirectory . DIRECTORY_SEPARATOR . 'distributions-registry.json',
-        $storageRoot . DIRECTORY_SEPARATOR . 'distr'
-    );
-    $mediaFiles = loadRegistry(
-        $dataDirectory . DIRECTORY_SEPARATOR . 'media-registry.json',
-        $storageRoot . DIRECTORY_SEPARATOR . 'media'
-    );
-
-    if (array_intersect_key($distributionFiles, $mediaFiles) !== []) {
-        throw new RuntimeException('Registry keys must be unique');
-    }
-
-    $allowed = $distributionFiles + $mediaFiles;
-} catch (Throwable $exception) {
-    sendError(500, 'Error: service configuration unavailable');
-}
+$allowedSources = [
+    'site',
+    'jed',
+    'joomla',
+    'updater',
+];
 
 $requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if (!in_array($requestMethod, ['GET', 'HEAD'], true)) {
     header('Allow: GET, HEAD');
-    sendError(405, 'Error: method not allowed');
+    sendError(405, '405 Method Not Allowed');
 }
 
-$key = isset($_GET['file']) && is_string($_GET['file'])
+$product = isset($_GET['product']) && is_string($_GET['product'])
+    ? $_GET['product']
+    : '';
+
+$fileName = isset($_GET['file']) && is_string($_GET['file'])
     ? $_GET['file']
     : '';
 
-if (!array_key_exists($key, $allowed)) {
-    sendError(400, 'Error: invalid key');
+$file = false;
+$logKey = '';
+
+/*
+ * New route:
+ *
+ * download.php?product=bsl-timer&file=BSL-Timer-0.4.0-Free-x64-setup.exe.zip
+ */
+if ($product !== '') {
+    if (!array_key_exists($product, $products)) {
+        sendError(404);
+    }
+
+    if (
+        $fileName === ''
+        || basename($fileName) !== $fileName
+        || str_contains($fileName, '..')
+        || str_contains($fileName, '/')
+        || str_contains($fileName, '\\')
+        || str_contains($fileName, "\0")
+    ) {
+        sendError(404);
+    }
+
+    $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+
+    if (!in_array($extension, $allowedExtensions, true)) {
+        sendError(404);
+    }
+
+    $productDirectory = realpath(
+        __DIR__ . DIRECTORY_SEPARATOR . $products[$product]
+    );
+
+    if ($productDirectory === false || !is_dir($productDirectory)) {
+        sendError(404);
+    }
+
+    $candidate = realpath(
+        $productDirectory . DIRECTORY_SEPARATOR . $fileName
+    );
+
+    if (
+        $candidate === false
+        || !is_file($candidate)
+        || !is_readable($candidate)
+    ) {
+        sendError(404);
+    }
+
+    $productPrefix = rtrim($productDirectory, DIRECTORY_SEPARATOR)
+        . DIRECTORY_SEPARATOR;
+
+    if (!str_starts_with($candidate, $productPrefix)) {
+        sendError(404);
+    }
+
+    $file = $candidate;
+    $logKey = $product . '/' . $fileName;
+} else {
+    /*
+     * Legacy route:
+     *
+     * download.php?file=bsl-timer-0.4.0
+     */
+    if (!array_key_exists($fileName, $legacyFiles)) {
+        sendError(404);
+    }
+
+    $candidate = realpath(
+        __DIR__ . DIRECTORY_SEPARATOR . $legacyFiles[$fileName]
+    );
+
+    if (
+        $candidate === false
+        || !is_file($candidate)
+        || !is_readable($candidate)
+    ) {
+        sendError(404);
+    }
+
+    $file = $candidate;
+    $logKey = $fileName;
 }
-
-$entry = $allowed[$key];
-$file = realpath(
-    $entry['base'] . DIRECTORY_SEPARATOR . $entry['filename']
-);
-
-if (
-    $file === false
-    || !isPathWithinDirectory($file, $entry['base'])
-    || !is_file($file)
-    || !is_readable($file)
-) {
-    sendError(404, 'Error: file not found');
-}
-
-$mimeTypes = [
-    'mp3'  => 'audio/mpeg',
-    'mp4'  => 'video/mp4',
-    'webm' => 'video/webm',
-    'ogg'  => 'application/ogg',
-    'exe'  => 'application/octet-stream',
-    'zip'  => 'application/zip',
-    'gz'   => 'application/gzip',
-];
 
 $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
 $contentType = $mimeTypes[$extension] ?? 'application/octet-stream';
 
-$allowedSources = ['site', 'jed', 'joomla'];
 $source = isset($_GET['source']) && is_string($_GET['source'])
     ? strtolower($_GET['source'])
     : 'direct';
@@ -163,7 +204,7 @@ if ($requestMethod === 'GET') {
     if (is_dir($logDirectory) && is_writable($logDirectory)) {
         $logLine = implode("\t", [
             date('c'),
-            $key,
+            $logKey,
             $source,
         ]) . PHP_EOL;
 
@@ -174,7 +215,7 @@ if ($requestMethod === 'GET') {
 $fileSize = filesize($file);
 
 if ($fileSize === false) {
-    sendError(500, 'Error: could not determine file size');
+    sendError(500, '500 Internal Server Error');
 }
 
 header('Content-Type: ' . $contentType);

@@ -1,58 +1,44 @@
 # BSL Download Service
 
-Shared server-side infrastructure for BSL-World websites and product delivery.
+Shared download gateway and statistics page for BSL-World.
 
 ## Current components
 
-- `download.php` - public gateway for controlled distribution and media delivery.
-- `config/distributions-registry.json` - versioned registry of application and Joomla extension packages.
-- `config/media-registry.seed.json` - initial media registry for a new installation.
-- `tests/download.integration.test.js` - integration coverage for successful requests and configuration failures.
+- `download.php` — public gateway for distribution packages and media.
+- `download-stats.php` — private report, available only to the configured Joomla users.
+- `tests/download.integration.test.js` — gateway integration tests.
 
 ## Hosting layout
 
-The gateway is deployed in the public root of `bsl-world.ru`. Data and downloadable files remain outside the site root:
+Deploy both PHP files in the root of the Joomla site (`www/bsl-world.ru/`). The files they serve and read are outside that root:
 
-- `../distr/` - application and Joomla extension packages;
-- `../media/` - public audio and video files;
-- `../bsl-data/distributions-registry.json` - deployed distribution registry;
-- `../bsl-data/media-registry.json` - runtime media registry;
-- `../bsl-data/download.log` - download request log.
+- `www/distr/<product>/` — versioned packages for registered products;
+- `www/distr/` — existing Tor and 7-Zip packages served through legacy keys;
+- `www/media/` — audio and video served through legacy keys;
+- `www/bsl-data/download.log` — request log.
 
-## Registry model
+The paths above are relative to the `www/` parent of the Joomla directory. The statistics page requires the Joomla installation and an active Joomla session.
 
-Each registry is a JSON object that maps a public logical key to a filename. Registry values contain filenames only, never paths.
+## Public URLs
 
-The distribution registry is maintained and versioned in this repository. The media seed provides initial data for a new installation. After deployment, `media-registry.json` is runtime data and must not be overwritten by the seed during routine updates. A future Joomla administration interface will manage that runtime registry.
+New package releases use `download.php?product=<registered-product>&file=<versioned-filename>`. Register each new product in `$products` in `download.php`; releasing a new version of a registered product does not require editing the gateway. Allowed package extensions are `exe`, `zip` and `gz`.
 
-Logical keys must be unique across both registries.
+Previously published `download.php?file=<key>` URLs use `$legacyFiles`. Preserve existing keys when files move; do not add new product versions to this list. The `tor` key currently delivers Tor Browser portable 15.0.11, which is a different artifact from the installer named in the old 0.2.0 JSON registry. Its URL is public to anyone who knows it.
 
-## Security model
+The `source` query value can be `site`, `jed`, `joomla` or `updater`; other values are logged as `direct`. `GET` requests are counted; `HEAD` is not. A successful `GET` is recorded before the file is read, so a later transfer interruption may still appear in the report.
 
-`download.php` never accepts a filesystem path from a request. It selects a fixed storage directory, validates the registered filename, resolves the resulting path, and verifies that the file remains inside the permitted directory.
+## Security and operations
 
-Missing, unreadable, malformed, oversized, or conflicting registries cause a safe configuration error without exposing internal details. Invalid filenames and duplicate logical keys are rejected.
+The product route accepts only registered product directories, a single filename, and an allowed extension. It resolves the real file path and checks that the result remains inside the product directory. The legacy route resolves only fixed paths listed in `$legacyFiles`. Invalid or unavailable files return a generic 404.
 
-Allowed request methods are `GET` and `HEAD`. Recognized traffic sources are `site`, `jed`, and `joomla`; other values are recorded as `direct`.
+The statistics page uses Joomla's session and checks usernames against its explicit allowlist. Update that allowlist if the site account names change. It reads `../bsl-data/download.log`; it does not modify the log.
 
-## Development and deployment
+Run `php -l download.php`, `php -l download-stats.php` and `node tests/download.integration.test.js <path-to-php>` before deployment. Then check package, legacy media, `GET`, `HEAD`, and statistics access on the target Joomla site. Keep site data, logs, secrets, and real packages out of Git.
 
-Changes must first pass PHP syntax checks and integration tests with PHP 8.1, 8.2, and 8.4. They must then be tested with the local Joomla 5 and Joomla 6 sites.
+The former `config/*.json` files belonged to the 0.2.0 registry gateway and are no longer read by this server implementation. Existing server copies under `www/bsl-data/` need no change for this migration.
 
-For deployment:
-
-1. Deploy `download.php` to the public site root.
-2. Deploy `config/distributions-registry.json` as `../bsl-data/distributions-registry.json`.
-3. On a new installation only, deploy `config/media-registry.seed.json` as `../bsl-data/media-registry.json`.
-4. Preserve the existing runtime `media-registry.json` during subsequent updates.
-5. Verify controlled downloads and compare returned files with their expected source artifacts.
-
-Runtime files, logs, credentials, and server-specific configuration must not be committed to this repository.
-
-## License
+## License and author
 
 GNU General Public License version 2 or later. See `LICENSE.txt`.
 
-## Author
-
-Vasilyev Alexander - [BSL-World.ru](https://bsl-world.ru)
+Vasilyev Alexander — [BSL-World.ru](https://bsl-world.ru)

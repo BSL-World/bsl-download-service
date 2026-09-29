@@ -2,6 +2,21 @@
 
 All notable changes to BSL Download Service are documented in this file.
 
+## Unreleased
+
+### Added
+
+- Product and versioned filename route from the confirmed server gateway.
+- `updater` download source and generic 404 responses.
+- Current Joomla-session-based download statistics page.
+- Legacy routes for existing Tor, 7-Zip and BSL Media Embed links.
+
+### Changed
+
+- The `tor` legacy key now delivers Tor Browser portable 15.0.11, as the old installer is not present in the server distribution directory.
+- Replaced the 0.2.0 JSON-registry gateway and its obsolete test fixtures with the confirmed server routing model.
+- Removed the former registry files from the repository; the server's existing data files are unaffected.
+
 ## [0.2.0] - 2026-09-06
 
 ### Added
